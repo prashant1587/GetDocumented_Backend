@@ -6,7 +6,7 @@ dotenv.config();
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   HOST: z.string().default('0.0.0.0'),
-  DATABASE_URL: z.string().min(1),
+  DATABASE_URL: z.string().min(1).default('mongodb://localhost:27017/getdocumented'),
   CORS_ORIGIN: z.string().default('*'),
   MAX_FILE_SIZE_MB: z.coerce.number().positive().default(10)
 });

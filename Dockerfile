@@ -13,13 +13,11 @@ COPY src ./src
 COPY README.md .
 COPY .env.example .
 
-RUN mkdir -p /app/data
-
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOST=0.0.0.0
-ENV DATABASE_URL=file:/app/data/dev.db
+ENV DATABASE_URL=mongodb://mongo:27017/getdocumented
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "npx prisma migrate deploy && node src/server.js"]
+CMD ["sh", "-c", "npx prisma db push && node src/server.js"]
