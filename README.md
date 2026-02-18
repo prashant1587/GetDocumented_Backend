@@ -15,7 +15,7 @@ Fastify backend for storing screenshot walkthrough steps (title, description, im
 ## Tech stack
 
 - Fastify
-- Prisma + SQLite
+- Prisma + MongoDB
 - PDFKit
 - Multipart uploads via `@fastify/multipart`
 
@@ -33,10 +33,10 @@ Fastify backend for storing screenshot walkthrough steps (title, description, im
    npm install
    ```
 
-3. Initialize SQLite + Prisma (creates `dev.db` and applies migrations):
+3. Initialize MongoDB schema + Prisma client:
 
    ```bash
-   npm run setup:sqlite
+   npm run setup:mongodb
    ```
 
 4. Start development server:
@@ -44,7 +44,6 @@ Fastify backend for storing screenshot walkthrough steps (title, description, im
    ```bash
    npm run dev
    ```
-
 
 ## Run with Docker
 
@@ -54,31 +53,31 @@ Fastify backend for storing screenshot walkthrough steps (title, description, im
 docker compose up --build
 ```
 
-The API will be available at `http://localhost:3000`, Swagger docs at `http://localhost:3000/docs`, and SQLite data will be persisted in the named volume `screenshot_data`.
+The API will be available at `http://localhost:3000`, Swagger docs at `http://localhost:3000/docs`, and MongoDB data will be persisted in the named volume `mongo_data`.
 
 ### Docker only
 
 ```bash
 docker build -t getdocumented-backend .
 docker run --rm -p 3000:3000 \
-  -e DATABASE_URL=file:/app/data/dev.db \
-  -v getdocumented_data:/app/data \
+  -e DATABASE_URL=mongodb://host.docker.internal:27017/getdocumented \
   getdocumented-backend
 ```
 
-On container startup, Prisma migrations are applied automatically with `prisma migrate deploy` before the server starts.
+On container startup, Prisma applies the schema to MongoDB automatically with `prisma db push` before the server starts.
 
-## SQLite setup details
+## MongoDB setup details
 
-- Default local DB path is `file:./dev.db` (auto-used when `DATABASE_URL` is not set).
-- `npm run setup:sqlite` runs `prisma generate` then `prisma migrate deploy`.
-- For local iterative schema work, you can still use `npm run prisma:migrate` (`prisma migrate dev`).
+- Default local DB URL is `mongodb://localhost:27017/getdocumented` (used when `DATABASE_URL` is not set).
+- `npm run setup:mongodb` runs `prisma generate` then `prisma db push`.
+- Use `npm run prisma:push` to apply schema changes.
+- Use `npm run db:reset` to reset DB data while keeping schema in sync.
 
 ## Environment variables
 
 - `PORT` (default: `3000`)
 - `HOST` (default: `0.0.0.0`)
-- `DATABASE_URL` (default in sample: `file:./dev.db`)
+- `DATABASE_URL` (default: `mongodb://localhost:27017/getdocumented`)
 - `CORS_ORIGIN` (default: `*`, comma-separated values supported)
 - `MAX_FILE_SIZE_MB` (default: `10`)
 

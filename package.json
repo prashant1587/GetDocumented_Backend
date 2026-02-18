@@ -8,10 +8,9 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy",
-    "setup:sqlite": "prisma generate && prisma migrate deploy",
-    "db:reset": "prisma migrate reset --force"
+    "db:reset": "prisma db push --force-reset",
+    "prisma:push": "prisma db push",
+    "setup:mongodb": "prisma generate && prisma db push"
   },
   "keywords": [
     "fastify",
