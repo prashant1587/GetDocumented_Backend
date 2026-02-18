@@ -51,29 +51,6 @@ Fastify backend for storing screenshot walkthrough steps (title, description, im
    npm run dev
    ```
 
-
-## Run with Docker
-
-### Docker Compose (recommended)
-
-```bash
-docker compose up --build
-```
-
-The API will be available at `http://localhost:3000`, Swagger docs at `http://localhost:3000/docs`, and SQLite data will be persisted in the named volume `screenshot_data`.
-
-### Docker only
-
-```bash
-docker build -t getdocumented-backend .
-docker run --rm -p 3000:3000 \
-  -e DATABASE_URL=file:/app/data/dev.db \
-  -v getdocumented_data:/app/data \
-  getdocumented-backend
-```
-
-On container startup, Prisma migrations are applied automatically with `prisma migrate deploy` before the server starts.
-
 ## Environment variables
 
 - `PORT` (default: `3000`)
