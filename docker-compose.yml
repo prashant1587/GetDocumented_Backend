@@ -1,0 +1,20 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: getdocumented-backend
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      HOST: 0.0.0.0
+      DATABASE_URL: file:/app/data/dev.db
+      CORS_ORIGIN: "*"
+      MAX_FILE_SIZE_MB: 10
+    volumes:
+      - screenshot_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  screenshot_data:
