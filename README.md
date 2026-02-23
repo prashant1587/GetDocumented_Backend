@@ -93,6 +93,16 @@ Base path: `/api`
 - `DELETE /screenshots/:id` → delete screenshot.
 - `GET /screenshots/export/pdf` → download full screenshots PDF.
 
+- `POST /documents` (JSON) → create one document with multiple items.
+  - body: `{ "title"?: string, "items": [{ "title": string, "description": string, "screenshot": string(base64|dataURL), "mimeType"?: string, "fileName"?: string, "position"?: number }] }`
+- `GET /documents/:id` → fetch one document with all items.
+- `DELETE /documents/:id` → delete one document (and all items).
+- `DELETE /documents/:id/items/:itemId` → delete one item from a document.
+- `PATCH /documents/:id/items/:itemId/title` → update item title.
+- `PATCH /documents/:id/items/:itemId/description` → update item description.
+- `PATCH /documents/:id/items/:itemId/screenshot` → replace one item screenshot with base64/dataURL payload.
+- `GET /documents/:id/items/:itemId/image` → download/render one item image.
+
 ## Notes for frontend integration
 
 - Store only metadata from `GET /screenshots` and render each image using the returned `imageUrl`.

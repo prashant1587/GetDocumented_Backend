@@ -7,6 +7,7 @@ import swaggerUi from '@fastify/swagger-ui';
 import { env, maxFileSizeInBytes } from './config/env.js';
 import prismaPlugin from './plugins/prisma.js';
 import screenshotRoutes from './routes/screenshots.js';
+import documentRoutes from './routes/documents.js';
 
 export const buildApp = () => {
   const app = Fastify({ logger: true });
@@ -41,6 +42,7 @@ export const buildApp = () => {
 
   app.register(async (api) => {
     api.register(screenshotRoutes, { prefix: '/api' });
+    api.register(documentRoutes, { prefix: '/api' });
   });
 
   app.setErrorHandler((error, _request, reply) => {
