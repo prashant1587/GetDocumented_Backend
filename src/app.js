@@ -1,4 +1,6 @@
 import Fastify from 'fastify';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import swagger from '@fastify/swagger';
@@ -8,6 +10,9 @@ import { env, maxFileSizeInBytes } from './config/env.js';
 import prismaPlugin from './plugins/prisma.js';
 import screenshotRoutes from './routes/screenshots.js';
 import documentRoutes from './routes/documents.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export const buildApp = () => {
   const app = Fastify({ logger: true });
@@ -24,11 +29,9 @@ export const buildApp = () => {
   });
 
   app.register(swagger, {
-    openapi: {
-      info: {
-        title: 'GetDocumented Screenshots API',
-        version: '1.0.0'
-      }
+    mode: 'static',
+    specification: {
+      path: path.join(__dirname, '../docs/swagger.json')
     }
   });
 
