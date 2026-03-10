@@ -19,26 +19,12 @@ const swaggerSpecCandidates = [
   path.join(process.cwd(), 'docs/swagger.json')
 ];
 
-const resolveSwaggerDocument = () => {
-  for (const candidate of swaggerSpecCandidates) {
-    if (!fs.existsSync(candidate)) {
-      continue;
-    }
-
-    try {
-      const contents = fs.readFileSync(candidate, 'utf-8');
-      return JSON.parse(contents);
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
-};
+const resolveSwaggerSpecificationPath = () =>
+  swaggerSpecCandidates.find((candidate) => fs.existsSync(candidate));
 
 export const buildApp = () => {
   const app = Fastify({ logger: true });
-  const swaggerDocument = resolveSwaggerDocument();
+  const swaggerSpecPath = resolveSwaggerSpecificationPath();
 
   app.register(cors, {
     origin: env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((item) => item.trim())
@@ -51,18 +37,25 @@ export const buildApp = () => {
     }
   });
 
-  app.register(swagger, swaggerDocument ? {
-    mode: 'dynamic',
-    openapi: swaggerDocument
-  } : {
-    mode: 'dynamic',
-    openapi: {
-      info: {
-        title: 'GetDocumented API',
-        version: '1.0.0'
+  if (swaggerSpecPath) {
+    app.register(swagger, {
+      mode: 'static',
+      specification: {
+        path: swaggerSpecPath
       }
-    }
-  });
+    });
+  } else {
+    app.log.warn('Swagger specification file was not found. Falling back to dynamic OpenAPI metadata.');
+
+    app.register(swagger, {
+      openapi: {
+        info: {
+          title: 'GetDocumented API',
+          version: '1.0.0'
+        }
+      }
+    });
+  }
 
   if (!swaggerDocument) {
     app.log.warn('Swagger specification file was not found or invalid. Falling back to minimal OpenAPI metadata.');
