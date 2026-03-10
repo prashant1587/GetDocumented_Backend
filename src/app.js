@@ -57,6 +57,10 @@ export const buildApp = () => {
     });
   }
 
+  if (!swaggerDocument) {
+    app.log.warn('Swagger specification file was not found or invalid. Falling back to minimal OpenAPI metadata.');
+  }
+
   app.register(swaggerUi, {
     routePrefix: '/docs'
   });
