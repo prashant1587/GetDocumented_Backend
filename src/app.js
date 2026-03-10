@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cors from '@fastify/cors';
@@ -13,9 +14,17 @@ import documentRoutes from './routes/documents.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const swaggerSpecCandidates = [
+  path.join(__dirname, '../docs/swagger.json'),
+  path.join(process.cwd(), 'docs/swagger.json')
+];
+
+const resolveSwaggerSpecificationPath = () =>
+  swaggerSpecCandidates.find((candidate) => fs.existsSync(candidate));
 
 export const buildApp = () => {
   const app = Fastify({ logger: true });
+  const swaggerSpecPath = resolveSwaggerSpecificationPath();
 
   app.register(cors, {
     origin: env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((item) => item.trim())
@@ -28,12 +37,25 @@ export const buildApp = () => {
     }
   });
 
-  app.register(swagger, {
-    mode: 'static',
-    specification: {
-      path: path.join(__dirname, '../docs/swagger.json')
-    }
-  });
+  if (swaggerSpecPath) {
+    app.register(swagger, {
+      mode: 'static',
+      specification: {
+        path: swaggerSpecPath
+      }
+    });
+  } else {
+    app.log.warn('Swagger specification file was not found. Falling back to dynamic OpenAPI metadata.');
+
+    app.register(swagger, {
+      openapi: {
+        info: {
+          title: 'GetDocumented API',
+          version: '1.0.0'
+        }
+      }
+    });
+  }
 
   app.register(swaggerUi, {
     routePrefix: '/docs'
