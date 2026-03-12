@@ -19,12 +19,25 @@ const swaggerSpecCandidates = [
   path.join(process.cwd(), 'docs/swagger.json')
 ];
 
-const resolveSwaggerSpecificationPath = () =>
-  swaggerSpecCandidates.find((candidate) => fs.existsSync(candidate));
+const loadSwaggerSpecification = () => {
+  const swaggerSpecPath = swaggerSpecCandidates.find((candidate) => fs.existsSync(candidate));
+
+  if (!swaggerSpecPath) {
+    return null;
+  }
+
+  try {
+    const swaggerDocument = JSON.parse(fs.readFileSync(swaggerSpecPath, 'utf8'));
+
+    return { swaggerDocument, swaggerSpecPath };
+  } catch (error) {
+    return { swaggerDocument: null, swaggerSpecPath, error };
+  }
+};
 
 export const buildApp = () => {
   const app = Fastify({ logger: true });
-  const swaggerSpecPath = resolveSwaggerSpecificationPath();
+  const swaggerSpec = loadSwaggerSpecification();
 
   app.register(cors, {
     origin: env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((item) => item.trim())
@@ -37,15 +50,19 @@ export const buildApp = () => {
     }
   });
 
-  if (swaggerSpecPath) {
+  if (swaggerSpec?.swaggerDocument) {
     app.register(swagger, {
-      mode: 'static',
-      specification: {
-        path: swaggerSpecPath
-      }
+      openapi: swaggerSpec.swaggerDocument
     });
   } else {
-    app.log.warn('Swagger specification file was not found. Falling back to dynamic OpenAPI metadata.');
+    if (swaggerSpec?.error) {
+      app.log.warn(
+        { err: swaggerSpec.error, swaggerSpecPath: swaggerSpec.swaggerSpecPath },
+        'Swagger specification file could not be loaded. Falling back to minimal OpenAPI metadata.'
+      );
+    } else {
+      app.log.warn('Swagger specification file was not found. Falling back to minimal OpenAPI metadata.');
+    }
 
     app.register(swagger, {
       openapi: {
@@ -55,10 +72,6 @@ export const buildApp = () => {
         }
       }
     });
-  }
-
-  if (!swaggerDocument) {
-    app.log.warn('Swagger specification file was not found or invalid. Falling back to minimal OpenAPI metadata.');
   }
 
   app.register(swaggerUi, {
