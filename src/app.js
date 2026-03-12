@@ -7,7 +7,7 @@ import multipart from '@fastify/multipart';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 
-import { env, maxFileSizeInBytes } from './config/env.js';
+import { env, maxFileSizeInBytes, maxRequestBodyInBytes } from './config/env.js';
 import prismaPlugin from './plugins/prisma.js';
 import screenshotRoutes from './routes/screenshots.js';
 import documentRoutes from './routes/documents.js';
@@ -36,7 +36,7 @@ const loadSwaggerSpecification = () => {
 };
 
 export const buildApp = () => {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: true, bodyLimit: maxRequestBodyInBytes });
   const swaggerSpec = loadSwaggerSpecification();
 
   app.register(cors, {
@@ -46,7 +46,7 @@ export const buildApp = () => {
   app.register(multipart, {
     limits: {
       fileSize: maxFileSizeInBytes,
-      files: 1
+      files: 20
     }
   });
 
@@ -92,6 +92,12 @@ export const buildApp = () => {
 
     if (error.code === 'FST_REQ_FILE_TOO_LARGE') {
       return reply.code(413).send({ message: `Uploaded file is too large. Maximum size is ${env.MAX_FILE_SIZE_MB}MB.` });
+    }
+
+    if (error.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
+      return reply.code(413).send({
+        message: `Request payload is too large. Maximum body size is ${env.MAX_REQUEST_BODY_MB}MB. Use /api/documents/uploads/presigned-url for direct S3 uploads.`
+      });
     }
 
     return reply.code(error.statusCode || 500).send({

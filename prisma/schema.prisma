@@ -31,7 +31,7 @@ model DocumentItem {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   title       String
   description String
-  imageData   Bytes
+  imageUrl    String
   mimeType    String
   fileName    String?
   position    Int      @default(0)
