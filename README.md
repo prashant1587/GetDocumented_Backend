@@ -1,6 +1,6 @@
 # GetDocumented Backend
 
-Fastify backend for storing screenshot walkthrough steps (title, description, image bytes), editing and deleting them, and exporting the full list as a PDF.
+Fastify backend for storing screenshot walkthrough steps, uploading document screenshots to S3, editing and deleting them, and exporting the full list as a PDF.
 
 ## Features
 
@@ -80,6 +80,13 @@ On container startup, Prisma applies the schema to MongoDB automatically with `p
 - `DATABASE_URL` (default: `mongodb://localhost:27017/getdocumented`)
 - `CORS_ORIGIN` (default: `*`, comma-separated values supported)
 - `MAX_FILE_SIZE_MB` (default: `10`)
+- `MAX_REQUEST_BODY_MB` (default: `50`)
+- `AWS_REGION` (default: `us-east-1`)
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `S3_BUCKET_NAME` (default: `get-documented-screenshots`)
+- `S3_PUBLIC_BASE_URL` (optional public CDN/custom domain base URL)
+- `S3_PRESIGNED_URL_TTL_SECONDS` (default: `900`)
 
 ## API quick reference
 
@@ -93,18 +100,22 @@ Base path: `/api`
 - `DELETE /screenshots/:id` → delete screenshot.
 - `GET /screenshots/export/pdf` → download full screenshots PDF.
 
+- `POST /documents/uploads/presigned-url` (JSON) → get pre-signed S3 upload URL for direct client upload (recommended to avoid 413).
+  - body: `{ "mimeType"?: string, "fileName"?: string }`
 - `POST /documents` (JSON) → create one document with multiple items.
-  - body: `{ "title"?: string, "items": [{ "title": string, "description": string, "screenshot": string(base64|dataURL), "mimeType"?: string, "fileName"?: string, "position"?: number }] }`
+  - body: `{ "title"?: string, "items": [{ "title": string, "description": string, "screenshot"?: string(base64|dataURL), "screenshotUrl"?: string, "mimeType"?: string, "fileName"?: string, "position"?: number }] }`
+  - API uploads base64 screenshots to S3 first, then stores only the image URL in MongoDB.
 - `GET /documents/:id` → fetch one document with all items.
 - `DELETE /documents/:id` → delete one document (and all items).
 - `DELETE /documents/:id/items/:itemId` → delete one item from a document.
 - `PATCH /documents/:id/items/:itemId/title` → update item title.
 - `PATCH /documents/:id/items/:itemId/description` → update item description.
-- `PATCH /documents/:id/items/:itemId/screenshot` → replace one item screenshot with base64/dataURL payload.
-- `GET /documents/:id/items/:itemId/image` → download/render one item image.
+- `PATCH /documents/:id/items/:itemId/screenshot` → replace one item screenshot using either `screenshotUrl` or base64/dataURL payload.
+- `GET /documents/:id/items/:itemId/image` → redirects to the stored S3 URL.
 
 ## Notes for frontend integration
 
 - Store only metadata from `GET /screenshots` and render each image using the returned `imageUrl`.
-- Use `multipart/form-data` whenever uploading/replacing images.
+- For document items, upload screenshots directly to S3 with `POST /documents/uploads/presigned-url`, then send `screenshotUrl` to `POST /documents` to avoid large JSON payloads (413).
+- Use `multipart/form-data` whenever uploading/replacing images on `/screenshots` endpoints.
 - For batch insertion from a clickthrough flow, call `POST /screenshots` for each screenshot in order and set `position`.

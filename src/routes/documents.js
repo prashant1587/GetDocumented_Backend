@@ -1,3 +1,5 @@
+import { createPresignedUpload, uploadBufferToS3 } from '../services/s3Storage.js';
+
 const toPublicDocumentItem = (item, documentId) => ({
   id: item.id,
   title: item.title,
@@ -7,7 +9,8 @@ const toPublicDocumentItem = (item, documentId) => ({
   position: item.position,
   createdAt: item.createdAt,
   updatedAt: item.updatedAt,
-  imageUrl: `/api/documents/${documentId}/items/${item.id}/image`
+  imageUrl: item.imageUrl,
+  imageProxyUrl: `/api/documents/${documentId}/items/${item.id}/image`
 });
 
 const toPublicDocument = (document) => ({
@@ -50,9 +53,20 @@ const parseScreenshotPayload = (value) => {
   };
 };
 
-const normalizeItemInput = (item, index) => {
-  if (!item?.title || !item?.description || !item?.screenshot) {
+const normalizeItemInput = async (item, index) => {
+  if (!item?.title || !item?.description || (!item?.screenshot && !item?.screenshotUrl)) {
     return null;
+  }
+
+  if (item.screenshotUrl) {
+    return {
+      title: item.title,
+      description: item.description,
+      fileName: item.fileName || null,
+      position: Number.isFinite(Number(item.position)) ? Number(item.position) : index,
+      imageUrl: item.screenshotUrl,
+      mimeType: item.mimeType || 'application/octet-stream'
+    };
   }
 
   const screenshot = parseScreenshotPayload(item.screenshot);
@@ -61,17 +75,35 @@ const normalizeItemInput = (item, index) => {
     return null;
   }
 
+  const upload = await uploadBufferToS3({
+    buffer: screenshot.buffer,
+    fileName: item.fileName,
+    mimeType: item.mimeType || screenshot.mimeType,
+    folder: 'documents'
+  });
+
   return {
     title: item.title,
     description: item.description,
     fileName: item.fileName || null,
     position: Number.isFinite(Number(item.position)) ? Number(item.position) : index,
-    imageData: screenshot.buffer,
+    imageUrl: upload.url,
     mimeType: item.mimeType || screenshot.mimeType
   };
 };
 
 export default async function documentRoutes(fastify) {
+  fastify.post('/documents/uploads/presigned-url', async (request, reply) => {
+    const { mimeType, fileName } = request.body || {};
+
+    const upload = await createPresignedUpload({
+      mimeType: mimeType || 'application/octet-stream',
+      fileName: fileName || 'document-screenshot'
+    });
+
+    return reply.code(201).send(upload);
+  });
+
   fastify.post('/documents', async (request, reply) => {
     const { title = null, items } = request.body || {};
 
@@ -79,13 +111,21 @@ export default async function documentRoutes(fastify) {
       return reply.code(400).send({ message: 'items array is required.' });
     }
 
-    const normalizedItems = items
-      .map((item, index) => normalizeItemInput(item, index))
-      .filter(Boolean);
+    let normalizedItems;
 
-    if (normalizedItems.length !== items.length) {
+    try {
+      normalizedItems = await Promise.all(items.map((item, index) => normalizeItemInput(item, index)));
+    } catch (error) {
+      request.log.error({ err: error }, 'Failed to upload screenshot(s) to S3 before document create.');
+      return reply.code(502).send({ message: 'Failed to upload screenshot(s) to S3.' });
+    }
+
+    const validItems = normalizedItems.filter(Boolean);
+
+    if (validItems.length !== items.length) {
       return reply.code(400).send({
-        message: 'Every item must include title, description, and screenshot (base64 or data URL).'
+        message:
+          'Every item must include title, description, and either screenshot (base64/data URL) or screenshotUrl (already uploaded to S3).'
       });
     }
 
@@ -93,7 +133,7 @@ export default async function documentRoutes(fastify) {
       data: {
         title,
         items: {
-          create: normalizedItems
+          create: validItems
         }
       },
       include: {
@@ -182,13 +222,7 @@ export default async function documentRoutes(fastify) {
   });
 
   fastify.patch('/documents/:id/items/:itemId/screenshot', async (request, reply) => {
-    const { screenshot, mimeType, fileName } = request.body || {};
-
-    const parsedScreenshot = parseScreenshotPayload(screenshot);
-
-    if (!parsedScreenshot?.buffer?.length) {
-      return reply.code(400).send({ message: 'screenshot is required and must be base64 or data URL.' });
-    }
+    const { screenshot, screenshotUrl, mimeType, fileName } = request.body || {};
 
     const item = await fastify.prisma.documentItem.findUnique({ where: { id: request.params.itemId } });
 
@@ -196,11 +230,34 @@ export default async function documentRoutes(fastify) {
       return reply.code(404).send({ message: 'Document item not found.' });
     }
 
+    let imageUrl = screenshotUrl;
+    let resolvedMimeType = mimeType || item.mimeType;
+
+    if (!imageUrl) {
+      const parsedScreenshot = parseScreenshotPayload(screenshot);
+
+      if (!parsedScreenshot?.buffer?.length) {
+        return reply.code(400).send({
+          message: 'Provide screenshotUrl or screenshot as a base64/data URL payload.'
+        });
+      }
+
+      const upload = await uploadBufferToS3({
+        buffer: parsedScreenshot.buffer,
+        fileName,
+        mimeType: mimeType || parsedScreenshot.mimeType,
+        folder: 'documents'
+      });
+
+      imageUrl = upload.url;
+      resolvedMimeType = mimeType || parsedScreenshot.mimeType || item.mimeType;
+    }
+
     const updated = await fastify.prisma.documentItem.update({
       where: { id: request.params.itemId },
       data: {
-        imageData: parsedScreenshot.buffer,
-        mimeType: mimeType || parsedScreenshot.mimeType || item.mimeType,
+        imageUrl,
+        mimeType: resolvedMimeType,
         fileName: fileName || item.fileName
       }
     });
@@ -212,8 +269,7 @@ export default async function documentRoutes(fastify) {
     const item = await fastify.prisma.documentItem.findUnique({
       where: { id: request.params.itemId },
       select: {
-        imageData: true,
-        mimeType: true,
+        imageUrl: true,
         documentId: true
       }
     });
@@ -222,6 +278,6 @@ export default async function documentRoutes(fastify) {
       return reply.code(404).send({ message: 'Document item not found.' });
     }
 
-    return reply.type(item.mimeType).send(Buffer.from(item.imageData));
+    return reply.redirect(item.imageUrl);
   });
 }
