@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 import { createPresignedUpload, uploadBufferToS3 } from '../services/s3Storage.js';
+=======
+import { buildWalkthroughPdf } from '../services/pdfExporter.js';
+>>>>>>> b1856bd (f)
 
 const toPublicDocumentItem = (item, documentId) => ({
   id: item.id,
@@ -142,6 +146,40 @@ export default async function documentRoutes(fastify) {
     });
 
     return reply.code(201).send(toPublicDocument(document));
+  });
+
+  fastify.post('/documents/export/pdf', async (request, reply) => {
+    const { title = 'GetDocumented Walkthrough', items } = request.body || {};
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return reply.code(400).send({ message: 'items array is required.' });
+    }
+
+    const normalizedItems = items
+      .map((item, index) => normalizeItemInput(item, index))
+      .filter(Boolean);
+
+    if (normalizedItems.length !== items.length) {
+      return reply.code(400).send({
+        message: 'Every item must include title, description, and screenshot (base64 or data URL).'
+      });
+    }
+
+    const pdfBuffer = await buildWalkthroughPdf({
+      title,
+      steps: normalizedItems
+        .sort((left, right) => left.position - right.position)
+        .map((item) => ({
+          title: item.title,
+          description: item.description,
+          imageData: item.imageData
+        }))
+    });
+
+    reply.header('Content-Type', 'application/pdf');
+    reply.header('Content-Disposition', 'attachment; filename="getdocumented-walkthrough.pdf"');
+
+    return reply.send(pdfBuffer);
   });
 
   fastify.get('/documents/:id', async (request, reply) => {
