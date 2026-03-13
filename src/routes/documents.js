@@ -1,8 +1,5 @@
-<<<<<<< HEAD
-import { createPresignedUpload, uploadBufferToS3 } from '../services/s3Storage.js';
-=======
 import { buildWalkthroughPdf } from '../services/pdfExporter.js';
->>>>>>> b1856bd (f)
+import { createPresignedUpload, uploadBufferToS3 } from '../services/s3Storage.js';
 
 const toPublicDocumentItem = (item, documentId) => ({
   id: item.id,
