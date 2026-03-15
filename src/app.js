@@ -8,9 +8,15 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 
 import { env, maxFileSizeInBytes, maxRequestBodyInBytes } from './config/env.js';
+import authPlugin from './plugins/auth.js';
 import prismaPlugin from './plugins/prisma.js';
 import screenshotRoutes from './routes/screenshots.js';
 import documentRoutes from './routes/documents.js';
+import exportBrandingRoutes from './routes/exportBranding.js';
+import authRoutes from './routes/auth.js';
+import { ensureUserRoleAssignments } from './services/accessControl.js';
+import { ensureDepartmentAssignments } from './services/departments.js';
+import departmentRoutes from './routes/departments.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,12 +85,20 @@ export const buildApp = () => {
   });
 
   app.register(prismaPlugin);
+  app.register(async (bootstrapApp) => {
+    await ensureUserRoleAssignments(bootstrapApp.prisma);
+    await ensureDepartmentAssignments(bootstrapApp.prisma);
+  });
+  app.register(authPlugin);
 
   app.get('/health', async () => ({ status: 'ok' }));
 
   app.register(async (api) => {
+    api.register(authRoutes, { prefix: '/api' });
+    api.register(departmentRoutes, { prefix: '/api' });
     api.register(screenshotRoutes, { prefix: '/api' });
     api.register(documentRoutes, { prefix: '/api' });
+    api.register(exportBrandingRoutes, { prefix: '/api' });
   });
 
   app.setErrorHandler((error, _request, reply) => {

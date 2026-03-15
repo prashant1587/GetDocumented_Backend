@@ -88,6 +88,37 @@ On container startup, Prisma applies the schema to MongoDB automatically with `p
 - `S3_PUBLIC_BASE_URL` (optional public CDN/custom domain base URL)
 - `S3_PRESIGNED_URL_TTL_SECONDS` (default: `900`)
 
+## S3 setup
+
+Direct document saves use pre-signed S3 uploads. The backend now fails at startup unless these values are configured in `.env` or Docker env:
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_REGION`
+- `S3_BUCKET_NAME`
+
+Example:
+
+```env
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your_access_key_id
+AWS_SECRET_ACCESS_KEY=your_secret_access_key
+S3_BUCKET_NAME=your-real-bucket-name
+```
+
+Your S3 bucket also needs CORS that allows browser `PUT` uploads. A minimal example is:
+
+```json
+[
+  {
+    "AllowedHeaders": ["*"],
+    "AllowedMethods": ["PUT", "GET", "HEAD"],
+    "AllowedOrigins": ["*"],
+    "ExposeHeaders": ["ETag"]
+  }
+]
+```
+
 ## API quick reference
 
 Base path: `/api`

@@ -20,11 +20,15 @@ model Screenshot {
 }
 
 model Document {
-  id        String         @id @default(auto()) @map("_id") @db.ObjectId
-  title     String?
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
-  items     DocumentItem[]
+  id           String         @id @default(auto()) @map("_id") @db.ObjectId
+  title        String?
+  departmentId String?        @db.ObjectId
+  creatorId    String?        @db.ObjectId
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  items        DocumentItem[]
+  department   Department?    @relation(fields: [departmentId], references: [id])
+  creator      User?          @relation("DocumentCreator", fields: [creatorId], references: [id])
 }
 
 model DocumentItem {
@@ -42,4 +46,78 @@ model DocumentItem {
   document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@index([documentId, position])
+}
+
+model ExportBrandingSettings {
+  id                   String   @id @default(auto()) @map("_id") @db.ObjectId
+  key                  String   @unique
+  companyName          String?
+  productName          String?
+  primaryColor         String   @default("#0f172a")
+  secondaryColor       String   @default("#334155")
+  accentColor          String   @default("#2563eb")
+  fontFamily           String   @default("Helvetica")
+  headerLogo           String?
+  footerLogo           String?
+  headerLogoPosition   String   @default("left")
+  headerTitlePlacement String   @default("center")
+  footerText           String?
+  footerCompanyInfo    String?
+  coverTitle           String?
+  coverSubtitle        String?
+  watermarkText        String?
+  watermarkEnabled     Boolean  @default(false)
+  tableHeaderBgColor   String   @default("#e2e8f0")
+  tableBorderColor     String   @default("#cbd5e1")
+  chartPrimaryColor    String   @default("#2563eb")
+  chartSecondaryColor  String   @default("#0f172a")
+  chartAccentColor     String   @default("#f59e0b")
+  introText            String?
+  disclaimerText       String?
+  summaryText          String?
+  fileNameFormat       String   @default("{{documentTitle}}-{{date}}")
+  locale               String   @default("en-US")
+  currencyCode         String   @default("USD")
+  language             String   @default("en")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model User {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  name         String
+  email        String   @unique
+  passwordHash String
+  roleId       String?  @db.ObjectId
+  departmentId String?  @db.ObjectId
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  role         Role?    @relation(fields: [roleId], references: [id])
+  department   Department? @relation(fields: [departmentId], references: [id])
+  documents    Document[]  @relation("DocumentCreator")
+}
+
+model Role {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  key          String   @unique
+  name         String
+  description  String?
+  capabilities String[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  users        User[]
+}
+
+model Department {
+  id        String     @id @default(auto()) @map("_id") @db.ObjectId
+  key       String     @unique
+  name      String
+  isCommon  Boolean    @default(false)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  users     User[]
+  documents Document[]
 }

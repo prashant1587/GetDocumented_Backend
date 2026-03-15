@@ -1,5 +1,21 @@
-import { buildWalkthroughPdf } from '../services/pdfExporter.js';
-import { createPresignedUpload, uploadBufferToS3 } from '../services/s3Storage.js';
+import { buildExportFileName, buildWalkthroughPdf } from '../services/pdfExporter.js';
+import { CAPABILITIES } from '../services/accessControl.js';
+import {
+  canUserAccessDocument,
+  getCommonDepartment,
+  toPublicDepartment
+} from '../services/departments.js';
+import {
+  createPresignedUpload,
+  downloadFileBufferFromS3,
+  uploadBufferToS3
+} from '../services/s3Storage.js';
+import { getExportBrandingSettings } from './exportBranding.js';
+
+const documentInclude = {
+  items: true,
+  department: true
+};
 
 const toPublicDocumentItem = (item, documentId) => ({
   id: item.id,
@@ -17,6 +33,9 @@ const toPublicDocumentItem = (item, documentId) => ({
 const toPublicDocument = (document) => ({
   id: document.id,
   title: document.title,
+  departmentId: document.departmentId || null,
+  department: document.department ? toPublicDepartment(document.department) : null,
+  creatorId: document.creatorId || null,
   createdAt: document.createdAt,
   updatedAt: document.updatedAt,
   items: document.items
@@ -93,23 +112,120 @@ const normalizeItemInput = async (item, index) => {
   };
 };
 
-export default async function documentRoutes(fastify) {
-  fastify.post('/documents/uploads/presigned-url', async (request, reply) => {
-    const { mimeType, fileName } = request.body || {};
-
-    const upload = await createPresignedUpload({
-      mimeType: mimeType || 'application/octet-stream',
-      fileName: fileName || 'document-screenshot'
-    });
-
-    return reply.code(201).send(upload);
+const getAccessibleDocument = async (prisma, user, documentId) => {
+  const document = await prisma.document.findUnique({
+    where: { id: documentId },
+    include: documentInclude
   });
 
-  fastify.post('/documents', async (request, reply) => {
-    const { title = null, items } = request.body || {};
+  if (!document || !canUserAccessDocument(user, document)) {
+    return null;
+  }
+
+  return document;
+};
+
+const getAccessibleDocumentItem = async (prisma, user, documentId, itemId) => {
+  const item = await prisma.documentItem.findUnique({
+    where: { id: itemId },
+    include: {
+      document: {
+        include: {
+          department: true
+        }
+      }
+    }
+  });
+
+  if (!item || item.documentId !== documentId || !canUserAccessDocument(user, item.document)) {
+    return null;
+  }
+
+  return item;
+};
+
+const resolveDocumentDepartmentId = async (prisma, user, requestedDepartmentId) => {
+  const commonDepartment = await getCommonDepartment(prisma);
+
+  if (user.role?.key === 'admin') {
+    if (!requestedDepartmentId) {
+      return commonDepartment.id;
+    }
+
+    const department = await prisma.department.findUnique({ where: { id: requestedDepartmentId } });
+    return department?.id || null;
+  }
+
+  if (user.departmentId) {
+    if (requestedDepartmentId && requestedDepartmentId !== user.departmentId) {
+      return false;
+    }
+
+    return user.departmentId;
+  }
+
+  if (!requestedDepartmentId) {
+    return commonDepartment.id;
+  }
+
+  const department = await prisma.department.findUnique({ where: { id: requestedDepartmentId } });
+  return department?.id || null;
+};
+
+export default async function documentRoutes(fastify) {
+  fastify.get('/documents', { preHandler: fastify.requireCapability(CAPABILITIES.DOCUMENTS_READ) }, async (request) => {
+    const documents = await fastify.prisma.document.findMany({
+      include: documentInclude,
+      orderBy: { createdAt: 'desc' }
+    });
+
+    return documents
+      .filter((document) => canUserAccessDocument(request.authUser, document))
+      .map(toPublicDocument);
+  });
+
+  fastify.post(
+    '/documents/uploads/presigned-url',
+    { preHandler: fastify.requireCapability(CAPABILITIES.DOCUMENTS_WRITE) },
+    async (request, reply) => {
+      const { mimeType, fileName } = request.body || {};
+
+      try {
+        const upload = await createPresignedUpload({
+          mimeType: mimeType || 'application/octet-stream',
+          fileName: fileName || 'document-screenshot'
+        });
+
+        return reply.code(201).send(upload);
+      } catch (error) {
+        request.log.error({ err: error }, 'Failed to create presigned S3 upload URL.');
+        return reply.code(502).send({
+          message:
+            'Unable to create S3 upload URL. Configure AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, and S3_BUCKET_NAME for the backend container.'
+        });
+      }
+    }
+  );
+
+  fastify.post('/documents', { preHandler: fastify.requireCapability(CAPABILITIES.DOCUMENTS_WRITE) }, async (request, reply) => {
+    const { title = null, items, departmentId } = request.body || {};
 
     if (!Array.isArray(items) || items.length === 0) {
       return reply.code(400).send({ message: 'items array is required.' });
+    }
+
+    const resolvedDepartmentId = await resolveDocumentDepartmentId(
+      fastify.prisma,
+      request.authUser,
+      departmentId || null
+    );
+
+    if (resolvedDepartmentId === false) {
+      return reply.code(403).send({ message: 'You can only create documents for your allowed department.' });
+    }
+
+    if (!resolvedDepartmentId) {
+      return reply.code(404).send({ message: 'Department not found.' });
     }
 
     let normalizedItems;
@@ -133,28 +249,33 @@ export default async function documentRoutes(fastify) {
     const document = await fastify.prisma.document.create({
       data: {
         title,
+        departmentId: resolvedDepartmentId,
+        creatorId: request.authUser.id,
         items: {
           create: validItems
         }
       },
-      include: {
-        items: true
-      }
+      include: documentInclude
     });
 
     return reply.code(201).send(toPublicDocument(document));
   });
 
-  fastify.post('/documents/export/pdf', async (request, reply) => {
+  fastify.post('/documents/export/pdf', { preHandler: fastify.requireCapability(CAPABILITIES.DOCUMENTS_EXPORT) }, async (request, reply) => {
     const { title = 'GetDocumented Walkthrough', items } = request.body || {};
 
     if (!Array.isArray(items) || items.length === 0) {
       return reply.code(400).send({ message: 'items array is required.' });
     }
 
-    const normalizedItems = items
-      .map((item, index) => normalizeItemInput(item, index))
-      .filter(Boolean);
+    let normalizedItems;
+
+    try {
+      normalizedItems = await Promise.all(items.map((item, index) => normalizeItemInput(item, index)));
+    } catch (error) {
+      request.log.error({ err: error }, 'Failed to prepare document export PDF input.');
+      return reply.code(502).send({ message: 'Failed to prepare document export PDF input.' });
+    }
 
     if (normalizedItems.length !== items.length) {
       return reply.code(400).send({
@@ -162,15 +283,19 @@ export default async function documentRoutes(fastify) {
       });
     }
 
-    const pdfBuffer = await buildWalkthroughPdf({
-      title,
-      steps: normalizedItems
+    const steps = await Promise.all(
+      normalizedItems
         .sort((left, right) => left.position - right.position)
-        .map((item) => ({
+        .map(async (item) => ({
           title: item.title,
           description: item.description,
-          imageData: item.imageData
+          imageData: await downloadFileBufferFromS3(item.imageUrl)
         }))
+    );
+
+    const pdfBuffer = await buildWalkthroughPdf({
+      title,
+      steps
     });
 
     reply.header('Content-Type', 'application/pdf');
@@ -179,11 +304,8 @@ export default async function documentRoutes(fastify) {
     return reply.send(pdfBuffer);
   });
 
-  fastify.get('/documents/:id', async (request, reply) => {
-    const document = await fastify.prisma.document.findUnique({
-      where: { id: request.params.id },
-      include: { items: true }
-    });
+  fastify.get('/documents/:id', { preHandler: fastify.requireCapability(CAPABILITIES.DOCUMENTS_READ) }, async (request, reply) => {
+    const document = await getAccessibleDocument(fastify.prisma, request.authUser, request.params.id);
 
     if (!document) {
       return reply.code(404).send({ message: 'Document not found.' });
@@ -192,8 +314,81 @@ export default async function documentRoutes(fastify) {
     return toPublicDocument(document);
   });
 
-  fastify.delete('/documents/:id', async (request, reply) => {
-    const document = await fastify.prisma.document.findUnique({ where: { id: request.params.id } });
+  fastify.get('/documents/:id/export/pdf', { preHandler: fastify.requireCapability(CAPABILITIES.DOCUMENTS_EXPORT) }, async (request, reply) => {
+    const document = await getAccessibleDocument(fastify.prisma, request.authUser, request.params.id);
+
+    if (!document) {
+      return reply.code(404).send({ message: 'Document not found.' });
+    }
+
+    try {
+      const branding = await getExportBrandingSettings(fastify.prisma);
+      const sortedItems = [...document.items].sort(
+        (left, right) => left.position - right.position || left.createdAt - right.createdAt
+      );
+
+      const steps = await Promise.all(
+        sortedItems.map(async (item) => ({
+          title: item.title,
+          description: item.description,
+          imageData: await downloadFileBufferFromS3(item.imageUrl)
+        }))
+      );
+
+      const pdfBuffer = await buildWalkthroughPdf({
+        title: document.title || `Document ${document.id}`,
+        subtitle: 'No steps found.',
+        steps,
+        branding,
+        metadata: {
+          documentId: document.id,
+          departmentName: document.department?.name || 'Common',
+          createdAt: document.createdAt,
+          updatedAt: document.updatedAt
+        }
+      });
+
+      reply.header('Content-Type', 'application/pdf');
+      reply.header(
+        'Content-Disposition',
+        `attachment; filename="${buildExportFileName({
+          title: document.title,
+          documentId: document.id,
+          branding
+        })}"`
+      );
+
+      return reply.send(pdfBuffer);
+    } catch (error) {
+      request.log.error({ err: error }, 'Failed to export document PDF.');
+      return reply.code(502).send({ message: 'Unable to export document PDF.' });
+    }
+  });
+
+  fastify.patch('/documents/:id/title', { preHandler: fastify.requireCapability(CAPABILITIES.DOCUMENTS_WRITE) }, async (request, reply) => {
+    const { title } = request.body || {};
+
+    if (typeof title !== 'string' || !title.trim()) {
+      return reply.code(400).send({ message: 'title is required.' });
+    }
+
+    const document = await getAccessibleDocument(fastify.prisma, request.authUser, request.params.id);
+
+    if (!document) {
+      return reply.code(404).send({ message: 'Document not found.' });
+    }
+
+    const updated = await fastify.prisma.document.update({
+      where: { id: request.params.id },
+      data: { title: title.trim() },
+      include: documentInclude
+    });
+
+    return toPublicDocument(updated);
+  });
+
+  fastify.delete('/documents/:id', { preHandler: fastify.requireCapability(CAPABILITIES.DOCUMENTS_WRITE) }, async (request, reply) => {
+    const document = await getAccessibleDocument(fastify.prisma, request.authUser, request.params.id);
 
     if (!document) {
       return reply.code(404).send({ message: 'Document not found.' });
@@ -203,10 +398,10 @@ export default async function documentRoutes(fastify) {
     return reply.code(204).send();
   });
 
-  fastify.delete('/documents/:id/items/:itemId', async (request, reply) => {
-    const item = await fastify.prisma.documentItem.findUnique({ where: { id: request.params.itemId } });
+  fastify.delete('/documents/:id/items/:itemId', { preHandler: fastify.requireCapability(CAPABILITIES.DOCUMENTS_WRITE) }, async (request, reply) => {
+    const item = await getAccessibleDocumentItem(fastify.prisma, request.authUser, request.params.id, request.params.itemId);
 
-    if (!item || item.documentId !== request.params.id) {
+    if (!item) {
       return reply.code(404).send({ message: 'Document item not found.' });
     }
 
@@ -214,54 +409,54 @@ export default async function documentRoutes(fastify) {
     return reply.code(204).send();
   });
 
-  fastify.patch('/documents/:id/items/:itemId/title', async (request, reply) => {
+  fastify.patch('/documents/:id/items/:itemId/title', { preHandler: fastify.requireCapability(CAPABILITIES.DOCUMENTS_WRITE) }, async (request, reply) => {
     const { title } = request.body || {};
 
-    if (!title) {
+    if (!title?.trim()) {
       return reply.code(400).send({ message: 'title is required.' });
     }
 
-    const item = await fastify.prisma.documentItem.findUnique({ where: { id: request.params.itemId } });
+    const item = await getAccessibleDocumentItem(fastify.prisma, request.authUser, request.params.id, request.params.itemId);
 
-    if (!item || item.documentId !== request.params.id) {
+    if (!item) {
       return reply.code(404).send({ message: 'Document item not found.' });
     }
 
     const updated = await fastify.prisma.documentItem.update({
       where: { id: request.params.itemId },
-      data: { title }
+      data: { title: title.trim() }
     });
 
     return toPublicDocumentItem(updated, request.params.id);
   });
 
-  fastify.patch('/documents/:id/items/:itemId/description', async (request, reply) => {
+  fastify.patch('/documents/:id/items/:itemId/description', { preHandler: fastify.requireCapability(CAPABILITIES.DOCUMENTS_WRITE) }, async (request, reply) => {
     const { description } = request.body || {};
 
-    if (!description) {
+    if (!description?.trim()) {
       return reply.code(400).send({ message: 'description is required.' });
     }
 
-    const item = await fastify.prisma.documentItem.findUnique({ where: { id: request.params.itemId } });
+    const item = await getAccessibleDocumentItem(fastify.prisma, request.authUser, request.params.id, request.params.itemId);
 
-    if (!item || item.documentId !== request.params.id) {
+    if (!item) {
       return reply.code(404).send({ message: 'Document item not found.' });
     }
 
     const updated = await fastify.prisma.documentItem.update({
       where: { id: request.params.itemId },
-      data: { description }
+      data: { description: description.trim() }
     });
 
     return toPublicDocumentItem(updated, request.params.id);
   });
 
-  fastify.patch('/documents/:id/items/:itemId/screenshot', async (request, reply) => {
+  fastify.patch('/documents/:id/items/:itemId/screenshot', { preHandler: fastify.requireCapability(CAPABILITIES.DOCUMENTS_WRITE) }, async (request, reply) => {
     const { screenshot, screenshotUrl, mimeType, fileName } = request.body || {};
 
-    const item = await fastify.prisma.documentItem.findUnique({ where: { id: request.params.itemId } });
+    const item = await getAccessibleDocumentItem(fastify.prisma, request.authUser, request.params.id, request.params.itemId);
 
-    if (!item || item.documentId !== request.params.id) {
+    if (!item) {
       return reply.code(404).send({ message: 'Document item not found.' });
     }
 
@@ -300,19 +495,21 @@ export default async function documentRoutes(fastify) {
     return toPublicDocumentItem(updated, request.params.id);
   });
 
-  fastify.get('/documents/:id/items/:itemId/image', async (request, reply) => {
-    const item = await fastify.prisma.documentItem.findUnique({
-      where: { id: request.params.itemId },
-      select: {
-        imageUrl: true,
-        documentId: true
-      }
-    });
+  fastify.get('/documents/:id/items/:itemId/image', { preHandler: fastify.requireCapability(CAPABILITIES.DOCUMENTS_READ) }, async (request, reply) => {
+    const item = await getAccessibleDocumentItem(fastify.prisma, request.authUser, request.params.id, request.params.itemId);
 
-    if (!item || item.documentId !== request.params.id) {
+    if (!item) {
       return reply.code(404).send({ message: 'Document item not found.' });
     }
 
-    return reply.redirect(item.imageUrl);
+    try {
+      const imageBuffer = await downloadFileBufferFromS3(item.imageUrl);
+      reply.header('Content-Type', item.mimeType || 'application/octet-stream');
+      reply.header('Cache-Control', 'private, max-age=60');
+      return reply.send(imageBuffer);
+    } catch (error) {
+      request.log.error({ err: error }, 'Failed to load document image from S3.');
+      return reply.code(502).send({ message: 'Unable to load document image from S3.' });
+    }
   });
 }

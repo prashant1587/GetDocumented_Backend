@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 import { env } from '../config/env.js';
@@ -83,4 +83,39 @@ export const createPresignedUpload = async ({ mimeType, fileName, folder = 'docu
     uploadUrl,
     fileUrl: buildS3FileUrl(key)
   };
+};
+
+export const extractS3KeyFromUrl = (url) => {
+  const parsedUrl = new URL(url);
+  return parsedUrl.pathname.replace(/^\/+/, '');
+};
+
+export const createPresignedDownloadUrl = async (fileUrl) => {
+  const key = extractS3KeyFromUrl(fileUrl);
+  const command = new GetObjectCommand({
+    Bucket: env.S3_BUCKET_NAME,
+    Key: key
+  });
+
+  return getSignedUrl(s3Client, command, {
+    expiresIn: env.S3_PRESIGNED_URL_TTL_SECONDS
+  });
+};
+
+export const downloadFileBufferFromS3 = async (fileUrl) => {
+  const key = extractS3KeyFromUrl(fileUrl);
+  const response = await s3Client.send(
+    new GetObjectCommand({
+      Bucket: env.S3_BUCKET_NAME,
+      Key: key
+    })
+  );
+
+  const chunks = [];
+
+  for await (const chunk of response.Body) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return Buffer.concat(chunks);
 };
